@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Secrets
+.env
+config/.env
+
+# Data (keep raw + interim out of git)
+data/raw/
+data/interim/
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
+
+
+
