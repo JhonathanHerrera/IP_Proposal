@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Merge your processed datasets (futures, FRED, EIA) into one analysis-ready CSV.
+Merge your processed datasets (futures, FRED, EIA) into one analysis-ready CSV
+that matches the format required by your C++ strategy.
 
 Inputs (expected if you've run the fetchers):
   - data/processed/futures_prices.csv     (date,symbol,root,settle)
   - data/processed/fred_wide.csv          (date, DTWEXBGS, T5YIFR[, VIXCLS])
   - data/processed/eia_wide.csv           (date, PET.WCRSTUS1.W, PET.WGTSTUS1.W, PET.WDISTUS1.W, PET.WRPUPUS2.W)
 
-Output (renamed per your request):
-  - data/processed/all_data.csv
+Output (ready for C++ strategy):
+  - data/processed/all_data.csv  (columns: symbol,date,price,volume,carry)
 
 Behavior:
   - Dates parsed as daily
   - EIA weekly series forward-filled to daily calendar (so daily rows have values)
   - Outer-merge FRED+EIA (macro), then left-join onto per-(date,symbol) futures panel
+  - Final CSV reduced to required strategy columns
 """
 
 import os
@@ -44,15 +46,14 @@ def to_daily_ffill(df: pd.DataFrame, date_col="date") -> pd.DataFrame:
         return df
     df = df.copy()
     df = df.sort_values(date_col)
-    # build full daily index
     full_idx = pd.date_range(df[date_col].min(), df[date_col].max(), freq="D")
-    df = df.set_index(date_col).reindex(full_idx)  # introduces NaNs on missing days
+    df = df.set_index(date_col).reindex(full_idx)  # introduces NaNs
     df = df.ffill()  # forward-fill weekly values to daily
     df = df.reset_index().rename(columns={"index": date_col})
     return df
 
 def main():
-    ap = argparse.ArgumentParser(description="Merge futures + FRED + EIA into one CSV.")
+    ap = argparse.ArgumentParser(description="Merge futures + FRED + EIA into one CSV for strategy.")
     ap.add_argument("--out", default=OUT_CSV, help="Output CSV path")
     ap.add_argument("--ffill-eia", action="store_true", default=True,
                     help="Forward-fill weekly EIA to daily (default on)")
@@ -60,22 +61,21 @@ def main():
                     help="Disable forward-fill for EIA")
     args = ap.parse_args()
 
-    # Load
-    futures = load_csv(FUTURES_CSV)   # expected columns: date,symbol,root,settle
+    # Load input files
+    futures = load_csv(FUTURES_CSV)   # expected: date,symbol,root,settle
     fred    = load_csv(FRED_CSV)      # date + macro cols
     eia     = load_csv(EIA_CSV)       # date + weekly series
 
-    # Early exit if we don't even have futures
     if futures is None or futures.empty:
         print("❌ futures file missing or empty:", FUTURES_CSV, file=sys.stderr)
         sys.exit(1)
 
-    # Ensure correct dtypes/sorting
+    # Prepare futures
     futures = futures.copy()
     futures["date"] = pd.to_datetime(futures["date"], errors="coerce")
-    futures = futures.dropna(subset=["date"]).sort_values(["date","symbol"])
+    futures = futures.dropna(subset=["date"]).sort_values(["date", "symbol"])
 
-    # Prepare macro: FRED + (optionally ffilled) EIA
+    # Prepare macro: FRED + EIA
     if eia is not None and not eia.empty and args.ffill_eia:
         eia = to_daily_ffill(eia, "date")
 
@@ -90,14 +90,30 @@ def main():
     # Merge futures with macro
     merged = futures if macro is None else pd.merge(futures, macro, on="date", how="left")
 
-    # Final tidy-up
-    merged = merged.sort_values(["date","symbol"]).reset_index(drop=True)
+    # --- Final tidy-up for strategy ---
+    merged = merged.sort_values(["date", "symbol"]).reset_index(drop=True)
+
+    # Rename to match strategy expectations
+    merged = merged.rename(columns={
+        "settle": "price",
+        "PET.WCRSTUS1.W": "volume",  # crude oil stocks proxy as volume
+        "T5YIFR": "carry"            # 5Y inflation expectation proxy as carry
+    })
+
+    # Keep only required columns
+    cols = ["symbol", "date", "price", "volume", "carry"]
+    merged = merged[[c for c in cols if c in merged.columns]]
+
+    # Fill missing values with 0
+    for c in ["price", "volume", "carry"]:
+        if c in merged.columns:
+            merged[c] = merged[c].fillna(0)
 
     os.makedirs(DATA_DIR, exist_ok=True)
     merged.to_csv(args.out, index=False)
+
     print(f"✅ Wrote {args.out} with {len(merged):,} rows and {len(merged.columns)} columns.")
-    # quick preview of columns
-    print("   Columns:", ", ".join(merged.columns[:12]) + ("..." if merged.shape[1] > 12 else ""))
+    print("   Columns:", ", ".join(merged.columns))
 
 if __name__ == "__main__":
     main()
