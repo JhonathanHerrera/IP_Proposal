@@ -22,25 +22,29 @@ public:
 
         while (std::getline(file, line)) {
             std::stringstream ss(line);
-            std::string symbol, date, priceStr, volumeStr, carryStr;
+            std::string symbol, date, priceStr, volumeStr, carryStr, dollarStr;
 
             std::getline(ss, symbol, ',');
             std::getline(ss, date, ',');
             std::getline(ss, priceStr, ',');
             std::getline(ss, volumeStr, ',');
             std::getline(ss, carryStr, ',');
+            std::getline(ss, dollarStr, ',');  // CRITICAL 1: Load dollar index
 
-            if (symbol.empty() || priceStr.empty() || volumeStr.empty() || carryStr.empty())
+            if (symbol.empty() || priceStr.empty() || volumeStr.empty() || carryStr.empty() || dollarStr.empty())
                 continue;
 
             double price = std::stod(priceStr);
             double volume = std::stod(volumeStr);
             double carry = std::stod(carryStr);
+            double dollar = std::stod(dollarStr);  // CRITICAL 1: Parse dollar index
 
             auto& c = bySymbol[symbol];
             c.name = symbol;
             c.prices.push_back(price);
             c.volumes.push_back(volume);
+            c.dollarIndex.push_back(dollar);  // CRITICAL 1: Store dollar index
+            c.inflationExpectations.push_back(carry);  // CRITICAL 3: Use carry as inflation expectations (T5YIFR)
             c.carry = carry; // just overwrite with the latest carry
         }
 

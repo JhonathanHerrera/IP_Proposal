@@ -17,6 +17,7 @@ int main() {
         strat.rank();
         strat.selectRanked();
         strat.display();
+        strat.applyPartialRebalancing();
     }
     catch (const std::exception& ex) {
         std::cerr << ex.what() << "\n";
